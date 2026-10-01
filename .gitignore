@@ -1,0 +1,16 @@
+# binary
+imgfft
+imgfft.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# test output
+out.png
