@@ -12,12 +12,12 @@ func main() {
 	}
 
 	switch os.Args[1] {
-	case "f":
-		cmdForward(os.Args[2:])
-	case "l":
-		cmdLossless(os.Args[2:])
-	case "i":
-		cmdInverse(os.Args[2:])
+	case "v":
+		cmdView(os.Args[2:])
+	case "s":
+		cmdSave(os.Args[2:])
+	case "r":
+		cmdRestore(os.Args[2:])
 	case "h", "help", "-h", "--help":
 		printHelp()
 	default:

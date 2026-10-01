@@ -6,14 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/madelynnblue/go-dsp/fft"
 )
 
-func cmdInverse(args []string) {
-	fs := flag.NewFlagSet("i", flag.ExitOnError)
-	in := fs.String("i", "", "输入文件（.tiff / .tif / .h5）")
-	out := fs.String("o", "out.png", "输出 PNG")
+func cmdRestore(args []string) {
+	start := time.Now()
+	fs := flag.NewFlagSet("r", flag.ExitOnError)
+	in := fs.String("i", "", "input 输入文件（.tiff / .tif / .h5）")
+	out := fs.String("o", "out.png", "output 输出 PNG")
 	fs.Parse(args)
 
 	if *in == "" {
@@ -30,11 +32,10 @@ func cmdInverse(args []string) {
 
 	var spectra [3][][]complex128
 	var fftW, fftH int
-	var origW, origH int
 
 	switch ext {
 	case ".tiff", ".tif":
-		chans, tw, th, tow, toh, err := readTIFF(*in)
+		chans, tw, th, err := readTIFF(*in)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "错误：读取 TIFF 失败：%v\n", err)
 			os.Exit(1)
@@ -44,7 +45,6 @@ func cmdInverse(args []string) {
 			os.Exit(1)
 		}
 		fftW, fftH = tw, th
-		origW, origH = tow, toh
 		for ch := 0; ch < 3; ch++ {
 			spectra[ch] = make([][]complex128, fftH)
 			for y := 0; y < fftH; y++ {
@@ -56,7 +56,7 @@ func cmdInverse(args []string) {
 		}
 	case ".h5":
 		var err error
-		spectra, fftW, fftH, origW, origH, err = readHDF5(*in)
+		spectra, fftW, fftH, err = readHDF5(*in)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "错误：读取 HDF5 失败：%v\n", err)
 			os.Exit(1)
@@ -76,21 +76,14 @@ func cmdInverse(args []string) {
 		restored[ch] = mat
 	}
 
-	cropped := make([][][]float64, 3)
-	for ch := 0; ch < 3; ch++ {
-		cropped[ch] = make([][]float64, origH)
-		for y := 0; y < origH; y++ {
-			cropped[ch][y] = make([]float64, origW)
-			for x := 0; x < origW; x++ {
-				cropped[ch][y][x] = restored[ch][y][x]
-			}
-		}
+	outPath := *out
+	if !strings.HasSuffix(strings.ToLower(outPath), ".png") {
+		outPath += ".png"
 	}
-
-	img := mergeChannels(cropped[0], cropped[1], cropped[2], origW, origH)
-	if err := savePNG(img, *out); err != nil {
+	img := mergeChannels(restored[0], restored[1], restored[2], fftW, fftH)
+	if err := savePNG(img, outPath); err != nil {
 		fmt.Fprintf(os.Stderr, "错误：保存 PNG 失败：%v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("输出 -> %s (%dx%d)\n", *out, origW, origH)
+	fmt.Printf("输出 -> %s (%dx%d, 耗时 %v)\n", outPath, fftW, fftH, time.Since(start).Round(time.Millisecond))
 }

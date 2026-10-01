@@ -6,24 +6,21 @@ import (
 	"io"
 	"math"
 	"os"
-	"strconv"
-	"strings"
 )
 
 const (
-	tiffTagImageWidth       = 256
-	tiffTagImageLength      = 257
-	tiffTagBitsPerSample    = 258
-	tiffTagCompression      = 259
-	tiffTagPhotometric      = 262
-	tiffTagStripOffsets     = 273
-	tiffTagSamplesPerPixel  = 277
-	tiffTagRowsPerStrip     = 278
-	tiffTagStripByteCounts  = 279
-	tiffTagImageDescription = 270
-	tiffTagPlanarConfig     = 284
-	tiffTagExtraSamples     = 338
-	tiffTagSampleFormat     = 339
+	tiffTagImageWidth      = 256
+	tiffTagImageLength     = 257
+	tiffTagBitsPerSample   = 258
+	tiffTagCompression     = 259
+	tiffTagPhotometric     = 262
+	tiffTagStripOffsets    = 273
+	tiffTagSamplesPerPixel = 277
+	tiffTagRowsPerStrip    = 278
+	tiffTagStripByteCounts = 279
+	tiffTagPlanarConfig    = 284
+	tiffTagExtraSamples    = 338
+	tiffTagSampleFormat    = 339
 )
 
 type tiffEntry struct {
@@ -32,7 +29,7 @@ type tiffEntry struct {
 	value    uint32
 }
 
-func writeTIFF(path string, chans [][][]float64, w, h int, bits int, origW, origH int) error {
+func writeTIFF(path string, chans [][][]float64, w, h int, bits int) error {
 	numCh := len(chans)
 	if numCh != 3 && numCh != 6 {
 		return fmt.Errorf("TIFF 只支持 3 或 6 通道，当前 %d 通道", numCh)
@@ -40,10 +37,6 @@ func writeTIFF(path string, chans [][][]float64, w, h int, bits int, origW, orig
 	if bits != 32 && bits != 64 {
 		return fmt.Errorf("TIFF 位深必须是 32 或 64，当前 %d", bits)
 	}
-
-	descStr := fmt.Sprintf("%dx%d", origW, origH)
-	descBytes := []byte(descStr)
-	descLen := len(descBytes)
 
 	bytesPerSample := bits / 8
 	f, err := os.Create(path)
@@ -56,22 +49,20 @@ func writeTIFF(path string, chans [][][]float64, w, h int, bits int, origW, orig
 	binary.Write(f, binary.LittleEndian, uint16(42))
 	binary.Write(f, binary.LittleEndian, uint32(8))
 
-	numEntries := uint16(12)
+	numEntries := uint16(11)
 	if numCh == 6 {
-		numEntries = 13
+		numEntries = 12
 	}
 	ifdSize := uint32(2) + uint32(numEntries)*12 + 4
 	bitsOffset := uint32(8) + ifdSize
 	sampleFmtOffset := bitsOffset + uint32(numCh)*2
-	extraOffset := sampleFmtOffset + uint32(numCh)*2
-	var descOffset uint32
+	var extraOffset uint32
 	var pixelOffset uint32
 	if numCh == 6 {
-		descOffset = extraOffset + 6
-		pixelOffset = descOffset + uint32(descLen)
+		extraOffset = sampleFmtOffset + uint32(numCh)*2
+		pixelOffset = extraOffset + 6
 	} else {
-		descOffset = extraOffset
-		pixelOffset = descOffset + uint32(descLen)
+		pixelOffset = sampleFmtOffset + uint32(numCh)*2
 	}
 
 	binary.Write(f, binary.LittleEndian, numEntries)
@@ -88,7 +79,6 @@ func writeTIFF(path string, chans [][][]float64, w, h int, bits int, origW, orig
 		{tiffTagStripByteCounts, 4, 1, uint32(w * h * numCh * bytesPerSample)},
 		{tiffTagPlanarConfig, 3, 1, 1},
 		{tiffTagSampleFormat, 3, uint32(numCh), sampleFmtOffset},
-		{tiffTagImageDescription, 2, uint32(descLen), descOffset},
 	}
 	if numCh == 6 {
 		entries = append(entries, tiffEntry{tiffTagExtraSamples, 3, 3, extraOffset})
@@ -112,8 +102,6 @@ func writeTIFF(path string, chans [][][]float64, w, h int, bits int, origW, orig
 			binary.Write(f, binary.LittleEndian, uint16(0))
 		}
 	}
-
-	f.Write(descBytes)
 
 	buf := make([]byte, w*h*numCh*bytesPerSample)
 	bo := binary.LittleEndian
@@ -141,10 +129,10 @@ func writeTIFF(path string, chans [][][]float64, w, h int, bits int, origW, orig
 	return nil
 }
 
-func readTIFF(path string) ([][][]float64, int, int, int, int, error) {
+func readTIFF(path string) ([][][]float64, int, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, 0, 0, 0, 0, err
+		return nil, 0, 0, err
 	}
 	defer f.Close()
 
@@ -158,7 +146,7 @@ func readTIFF(path string) ([][][]float64, int, int, int, int, error) {
 	var magic uint16
 	binary.Read(f, order, &magic)
 	if magic != 42 {
-		return nil, 0, 0, 0, 0, fmt.Errorf("不是有效的 TIFF 文件")
+		return nil, 0, 0, fmt.Errorf("不是有效的 TIFF 文件")
 	}
 
 	var ifdOffset uint32
@@ -171,8 +159,6 @@ func readTIFF(path string) ([][][]float64, int, int, int, int, error) {
 	var w, h, numCh, stripOffset uint32
 	var bitsPerSample uint32
 	var bitsOffset uint32
-	var descOffset uint32
-	var descLen uint32
 
 	for i := 0; i < int(numEntries); i++ {
 		var e tiffEntry
@@ -195,9 +181,6 @@ func readTIFF(path string) ([][][]float64, int, int, int, int, error) {
 			} else {
 				bitsOffset = e.value
 			}
-		case tiffTagImageDescription:
-			descOffset = e.value
-			descLen = e.count
 		}
 	}
 
@@ -211,31 +194,13 @@ func readTIFF(path string) ([][][]float64, int, int, int, int, error) {
 	}
 
 	if numCh != 3 && numCh != 6 {
-		return nil, 0, 0, 0, 0, fmt.Errorf("TIFF 通道数必须是 3 或 6，当前 %d", numCh)
+		return nil, 0, 0, fmt.Errorf("TIFF 通道数必须是 3 或 6，当前 %d", numCh)
 	}
 	if w == 0 || h == 0 {
-		return nil, 0, 0, 0, 0, fmt.Errorf("TIFF 尺寸无效：%dx%d", w, h)
+		return nil, 0, 0, fmt.Errorf("TIFF 尺寸无效：%dx%d", w, h)
 	}
 	if bitsPerSample != 32 && bitsPerSample != 64 {
-		return nil, 0, 0, 0, 0, fmt.Errorf("TIFF 位深必须是 32 或 64，当前 %d", bitsPerSample)
-	}
-
-	origW, origH := int(w), int(h)
-	if descOffset != 0 && descLen > 0 {
-		cur, _ := f.Seek(0, io.SeekCurrent)
-		descData := make([]byte, descLen)
-		f.Seek(int64(descOffset), io.SeekStart)
-		io.ReadFull(f, descData)
-		f.Seek(cur, io.SeekStart)
-		descStr := string(descData)
-		parts := strings.SplitN(descStr, "x", 2)
-		if len(parts) == 2 {
-			if nw, e1 := strconv.Atoi(parts[0]); e1 == nil {
-				if nh, e2 := strconv.Atoi(parts[1]); e2 == nil {
-					origW, origH = nw, nh
-				}
-			}
-		}
+		return nil, 0, 0, fmt.Errorf("TIFF 位深必须是 32 或 64，当前 %d", bitsPerSample)
 	}
 
 	f.Seek(int64(stripOffset), io.SeekStart)
@@ -250,7 +215,7 @@ func readTIFF(path string) ([][][]float64, int, int, int, int, error) {
 	pixelBytes := int(w) * int(h) * int(numCh) * int(bitsPerSample) / 8
 	buf := make([]byte, pixelBytes)
 	if _, err := io.ReadFull(f, buf); err != nil {
-		return nil, 0, 0, 0, 0, fmt.Errorf("读取像素数据失败: %w", err)
+		return nil, 0, 0, fmt.Errorf("读取像素数据失败: %w", err)
 	}
 
 	idx := 0
@@ -276,5 +241,5 @@ func readTIFF(path string) ([][][]float64, int, int, int, int, error) {
 			}
 		}
 	}
-	return chans, int(w), int(h), origW, origH, nil
+	return chans, int(w), int(h), nil
 }

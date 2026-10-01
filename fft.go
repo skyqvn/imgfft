@@ -5,33 +5,6 @@ import (
 	"math/cmplx"
 )
 
-func nextPow2(n int) int {
-	p := 1
-	for p < n {
-		p <<= 1
-	}
-	return p
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func pad(mat [][]float64, size int) [][]float64 {
-	h := len(mat)
-	out := make([][]float64, size)
-	for y := 0; y < size; y++ {
-		out[y] = make([]float64, size)
-		if y < h {
-			copy(out[y], mat[y])
-		}
-	}
-	return out
-}
-
 func fftShiftComplex(spec [][]complex128) [][]complex128 {
 	h, w := len(spec), len(spec[0])
 	out := make([][]complex128, h)
@@ -45,17 +18,18 @@ func fftShiftComplex(spec [][]complex128) [][]complex128 {
 }
 
 func extractComponents(spec [][]complex128) (re, im, mag, ph [][]float64) {
-	n := len(spec)
-	re = make([][]float64, n)
-	im = make([][]float64, n)
-	mag = make([][]float64, n)
-	ph = make([][]float64, n)
-	for y := 0; y < n; y++ {
-		re[y] = make([]float64, n)
-		im[y] = make([]float64, n)
-		mag[y] = make([]float64, n)
-		ph[y] = make([]float64, n)
-		for x := 0; x < n; x++ {
+	h := len(spec)
+	w := len(spec[0])
+	re = make([][]float64, h)
+	im = make([][]float64, h)
+	mag = make([][]float64, h)
+	ph = make([][]float64, h)
+	for y := 0; y < h; y++ {
+		re[y] = make([]float64, w)
+		im[y] = make([]float64, w)
+		mag[y] = make([]float64, w)
+		ph[y] = make([]float64, w)
+		for x := 0; x < w; x++ {
 			c := spec[y][x]
 			re[y][x] = real(c)
 			im[y][x] = imag(c)

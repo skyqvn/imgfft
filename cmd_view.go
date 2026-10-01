@@ -6,16 +6,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/madelynnblue/go-dsp/fft"
 )
 
-func cmdForward(args []string) {
-	fs := flag.NewFlagSet("f", flag.ExitOnError)
-	in := fs.String("i", "", "输入图片路径")
-	out := fs.String("o", "", "输出前缀（默认=输入文件名）")
-	mode := fs.String("m", "0", "输出模式：0=幅度+相位（默认）, 1=实部+虚部")
-	format := fs.String("t", "png", "输出格式：png=8位PNG, tiff=float64 TIFF")
+func cmdView(args []string) {
+	start := time.Now()
+	fs := flag.NewFlagSet("v", flag.ExitOnError)
+	in := fs.String("i", "", "input 输入图片路径")
+	out := fs.String("o", "", "output 输出前缀（默认=输入文件名）")
+	mode := fs.String("m", "0", "mode 输出模式：0=幅度+相位（默认）, 1=实部+虚部")
+	format := fs.String("f", "png", "format 输出格式：png=8位PNG, tiff=float64 TIFF")
 	fs.Parse(args)
 
 	if *in == "" {
@@ -28,7 +30,7 @@ func cmdForward(args []string) {
 		os.Exit(1)
 	}
 	if *format != "png" && *format != "tiff" {
-		fmt.Fprintf(os.Stderr, "错误：-t 必须是 png 或 tiff，当前为 %q\n", *format)
+		fmt.Fprintf(os.Stderr, "错误：-f 必须是 png 或 tiff，当前为 %q\n", *format)
 		os.Exit(1)
 	}
 
@@ -40,8 +42,7 @@ func cmdForward(args []string) {
 
 	b := img.Bounds()
 	ow, oh := b.Dx(), b.Dy()
-	n := nextPow2(maxInt(ow, oh))
-	fmt.Printf("输入 %dx%d，FFT 尺寸 %dx%d\n", ow, oh, n, n)
+	fmt.Printf("输入 %dx%d\n", ow, oh)
 
 	prefix := *out
 	if prefix == "" {
@@ -51,7 +52,7 @@ func cmdForward(args []string) {
 	var reCh, imCh, magCh, phCh [3][][]float64
 
 	for ch := 0; ch < 3; ch++ {
-		mat := pad(extractChannel(img, ch), n)
+		mat := extractChannel(img, ch)
 		spec := fft.FFT2Real(mat)
 		shifted := fftShiftComplex(spec)
 
@@ -74,27 +75,27 @@ func cmdForward(args []string) {
 
 	switch *mode {
 	case "0":
-		outputPair(prefix, "mag", "phase", magCh, phCh, n, *format)
+		outputPair(prefix, "mag", "phase", magCh, phCh, ow, oh, *format)
 	case "1":
-		outputPair(prefix, "re", "im", reCh, imCh, n, *format)
+		outputPair(prefix, "re", "im", reCh, imCh, ow, oh, *format)
 	}
-	fmt.Println("完成。")
+	fmt.Printf("完成，耗时 %v。\n", time.Since(start).Round(time.Millisecond))
 }
 
-func outputPair(prefix, s1, s2 string, m1, m2 [3][][]float64, n int, format string) {
+func outputPair(prefix, s1, s2 string, m1, m2 [3][][]float64, w, h int, format string) {
 	if format == "png" {
-		savePNG(mergeChannels(m1[0], m1[1], m1[2], n, n), prefix+"_"+s1+".png")
-		savePNG(mergeChannels(m2[0], m2[1], m2[2], n, n), prefix+"_"+s2+".png")
+		savePNG(mergeChannels(m1[0], m1[1], m1[2], w, h), prefix+"_"+s1+".png")
+		savePNG(mergeChannels(m2[0], m2[1], m2[2], w, h), prefix+"_"+s2+".png")
 		fmt.Printf("%s -> %s_%s.png\n", s1, prefix, s1)
 		fmt.Printf("%s -> %s_%s.png\n", s2, prefix, s2)
 	} else {
 		chans1 := [][][]float64{m1[0], m1[1], m1[2]}
 		chans2 := [][][]float64{m2[0], m2[1], m2[2]}
-		if err := writeTIFF(prefix+"_"+s1+".tiff", chans1, n, n, 64, n, n); err != nil {
+		if err := writeTIFF(prefix+"_"+s1+".tiff", chans1, w, h, 64); err != nil {
 			fmt.Fprintf(os.Stderr, "错误：写入 %s 失败：%v\n", s1, err)
 			os.Exit(1)
 		}
-		if err := writeTIFF(prefix+"_"+s2+".tiff", chans2, n, n, 64, n, n); err != nil {
+		if err := writeTIFF(prefix+"_"+s2+".tiff", chans2, w, h, 64); err != nil {
 			fmt.Fprintf(os.Stderr, "错误：写入 %s 失败：%v\n", s2, err)
 			os.Exit(1)
 		}

@@ -12,5 +12,8 @@ imgfft.exe
 .DS_Store
 Thumbs.db
 
+# test script
+test.py
+
 # test output
 out.png
