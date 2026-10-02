@@ -1,6 +1,6 @@
 module imgfft
 
-go 1.27.1
+go 1.26.0
 
 require (
 	github.com/madelynnblue/go-dsp v1.0.0

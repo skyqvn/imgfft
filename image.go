@@ -14,15 +14,9 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-func clamp255(v float64) uint8 {
-	if v < 0 {
-		return 0
-	}
-	if v > 255 {
-		return 255
-	}
-	return uint8(v)
-}
+// =============================================================================
+// 图像文件 I/O
+// =============================================================================
 
 func loadImage(path string) (image.Image, error) {
 	f, err := os.Open(path)
@@ -46,12 +40,48 @@ func savePNG(img image.Image, path string) error {
 	return png.Encode(f, img)
 }
 
+// =============================================================================
+// 像素通道提取与合并
+// =============================================================================
+
+// extractChannel 从图像中提取单个颜色通道，返回 [][]float64。
+// ch: 0=R, 1=G, 2=B。
 func extractChannel(img image.Image, ch int) [][]float64 {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
+
+	data := make([]float64, w*h)
 	mat := make([][]float64, h)
+
+	switch src := img.(type) {
+	case *image.RGBA:
+		extractRGBAPix(data, mat, src.Pix, src.Stride, src.PixOffset(b.Min.X, b.Min.Y), ch, w, h)
+		return mat
+
+	case *image.NRGBA:
+		extractRGBAPix(data, mat, src.Pix, src.Stride, src.PixOffset(b.Min.X, b.Min.Y), ch, w, h)
+		return mat
+
+	case *image.YCbCr:
+		extractYCbCrPix(data, mat, src, ch, w, h)
+		return mat
+
+	case *image.Gray:
+		pix := src.Pix
+		stride := src.Stride
+		offset := src.PixOffset(b.Min.X, b.Min.Y)
+		for y := 0; y < h; y++ {
+			mat[y] = data[y*w : (y+1)*w]
+			for x := 0; x < w; x++ {
+				mat[y][x] = float64(pix[offset+y*stride+x])
+			}
+		}
+		return mat
+	}
+
+	// 回退：逐像素调用 At()（通用但较慢）
 	for y := 0; y < h; y++ {
-		mat[y] = make([]float64, w)
+		mat[y] = data[y*w : (y+1)*w]
 		for x := 0; x < w; x++ {
 			r, g, bb, _ := img.At(x+b.Min.X, y+b.Min.Y).RGBA()
 			var v uint32
@@ -69,14 +99,86 @@ func extractChannel(img image.Image, ch int) [][]float64 {
 	return mat
 }
 
+// extractRGBAPix 用于 RGBA / NRGBA 这类线性存储的像素格式。
+// Pix 布局为每像素 4 字节交错（R,G,B,A）。
+func extractRGBAPix(data []float64, mat [][]float64, pix []byte, stride, pixOff, ch, w, h int) {
+	for y := 0; y < h; y++ {
+		mat[y] = data[y*w : (y+1)*w]
+		row := pix[pixOff+y*stride:]
+		for x := 0; x < w; x++ {
+			mat[y][x] = float64(row[x*4+ch])
+		}
+	}
+}
+
+// extractYCbCrPix 处理 YCbCr 图像的色度子采样，将 YCbCr 转换为 RGB。
+func extractYCbCrPix(data []float64, mat [][]float64, src *image.YCbCr, ch, w, h int) {
+	cw, chDiv := ycbcrSubsampleRatio(src.SubsampleRatio)
+	for y := 0; y < h; y++ {
+		mat[y] = data[y*w : (y+1)*w]
+		for x := 0; x < w; x++ {
+			yi := y*src.YStride + x
+			ci := (y/chDiv)*src.CStride + x/cw
+			yy, cb, cr := src.Y[yi], src.Cb[ci], src.Cr[ci]
+			rr, gg, bb := color.YCbCrToRGB(yy, cb, cr)
+			mat[y][x] = float64(pickChannel(rr, gg, bb, ch))
+		}
+	}
+}
+
+// ycbcrSubsampleRatio 将 SubsampleRatio 转换为色度采样步长。
+func ycbcrSubsampleRatio(ratio image.YCbCrSubsampleRatio) (cw, chDiv int) {
+	switch ratio {
+	case image.YCbCrSubsampleRatio444:
+		return 1, 1
+	case image.YCbCrSubsampleRatio422:
+		return 2, 1
+	case image.YCbCrSubsampleRatio420:
+		return 2, 2
+	case image.YCbCrSubsampleRatio440:
+		return 1, 2
+	case image.YCbCrSubsampleRatio411:
+		return 4, 1
+	default:
+		return 2, 2
+	}
+}
+
+func pickChannel(r, g, b uint8, ch int) uint8 {
+	switch ch {
+	case 0:
+		return r
+	case 1:
+		return g
+	default:
+		return b
+	}
+}
+
 func mergeChannels(r, g, b [][]float64, w, h int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	pix := img.Pix
+	stride := img.Stride
 	for y := 0; y < h; y++ {
+		row := pix[y*stride : y*stride+w*4]
+		ry, gy, by := r[y], g[y], b[y]
 		for x := 0; x < w; x++ {
-			img.SetRGBA(x, y, color.RGBA{
-				clamp255(r[y][x]), clamp255(g[y][x]), clamp255(b[y][x]), 255,
-			})
+			off := x * 4
+			row[off+0] = clamp255(ry[x])
+			row[off+1] = clamp255(gy[x])
+			row[off+2] = clamp255(by[x])
+			row[off+3] = 255
 		}
 	}
 	return img
+}
+
+func clamp255(v float64) uint8 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return uint8(v)
 }

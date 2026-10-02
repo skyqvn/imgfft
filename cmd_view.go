@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/madelynnblue/go-dsp/fft"
@@ -49,57 +50,65 @@ func cmdView(args []string) {
 		prefix = strings.TrimSuffix(*in, filepath.Ext(*in))
 	}
 
+	// 模式参数在三个通道间不变，提前判断
+	magPhaseMode := *mode == "0"
+
 	var reCh, imCh, magCh, phCh [3][][]float64
 
+	var wg sync.WaitGroup
 	for ch := 0; ch < 3; ch++ {
-		mat := extractChannel(img, ch)
-		spec := fft.FFT2Real(mat)
-		shifted := fftShiftComplex(spec)
+		wg.Add(1)
+		go func(ch int) {
+			defer wg.Done()
+			mat := extractChannel(img, ch)
+			spec := fft.FFT2Real(mat)
+			fftShiftComplex(spec)
 
-		re, im, mag, ph := extractComponents(shifted)
+			var re, im, mag, ph [][]float64
+			if magPhaseMode {
+				_, _, mag, ph = extractComponents(spec, false, false, true, true)
+				normalizeMag(mag)
+				normalizePh(ph)
+			} else {
+				re, im, _, _ = extractComponents(spec, true, true, false, false)
+				normalizeRealImag(re)
+				normalizeRealImag(im)
+			}
 
-		switch *mode {
-		case "0":
-			normalizeMag(mag)
-			normalizePh(ph)
-		case "1":
-			normalizeRealImag(re)
-			normalizeRealImag(im)
-		}
-
-		reCh[ch] = re
-		imCh[ch] = im
-		magCh[ch] = mag
-		phCh[ch] = ph
+			reCh[ch] = re
+			imCh[ch] = im
+			magCh[ch] = mag
+			phCh[ch] = ph
+		}(ch)
 	}
+	wg.Wait()
 
-	switch *mode {
-	case "0":
+	if magPhaseMode {
 		outputPair(prefix, "mag", "phase", magCh, phCh, ow, oh, *format)
-	case "1":
+	} else {
 		outputPair(prefix, "re", "im", reCh, imCh, ow, oh, *format)
 	}
 	fmt.Printf("完成，耗时 %v。\n", time.Since(start).Round(time.Millisecond))
 }
 
 func outputPair(prefix, s1, s2 string, m1, m2 [3][][]float64, w, h int, format string) {
-	if format == "png" {
+	switch format {
+	case "png":
 		savePNG(mergeChannels(m1[0], m1[1], m1[2], w, h), prefix+"_"+s1+".png")
 		savePNG(mergeChannels(m2[0], m2[1], m2[2], w, h), prefix+"_"+s2+".png")
 		fmt.Printf("%s -> %s_%s.png\n", s1, prefix, s1)
 		fmt.Printf("%s -> %s_%s.png\n", s2, prefix, s2)
-	} else {
-		chans1 := [][][]float64{m1[0], m1[1], m1[2]}
-		chans2 := [][][]float64{m2[0], m2[1], m2[2]}
-		if err := writeTIFF(prefix+"_"+s1+".tiff", chans1, w, h, 64); err != nil {
-			fmt.Fprintf(os.Stderr, "错误：写入 %s 失败：%v\n", s1, err)
-			os.Exit(1)
-		}
-		if err := writeTIFF(prefix+"_"+s2+".tiff", chans2, w, h, 64); err != nil {
-			fmt.Fprintf(os.Stderr, "错误：写入 %s 失败：%v\n", s2, err)
-			os.Exit(1)
-		}
-		fmt.Printf("%s -> %s_%s.tiff\n", s1, prefix, s1)
-		fmt.Printf("%s -> %s_%s.tiff\n", s2, prefix, s2)
+	case "tiff":
+		writeViewTIFF(prefix, s1, m1, w, h)
+		writeViewTIFF(prefix, s2, m2, w, h)
 	}
+}
+
+func writeViewTIFF(prefix, name string, chans [3][][]float64, w, h int) {
+	flat := [][][]float64{chans[0], chans[1], chans[2]}
+	if err := writeTIFF(prefix+"_"+name+".tiff", flat, w, h, 64); err != nil {
+		fmt.Fprintf(os.Stderr, "错误：写入 %s 失败：%v\n", name, err)
+		os.Exit(1)
+	}
+	fmt.Printf("%s -> %s_%s.tiff\n", name, prefix, name)
 }
