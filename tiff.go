@@ -93,11 +93,11 @@ func writeIFD(f *os.File, numEntries uint16, numCh, w, h int, bitsOffset, sample
 		{tiffTagRowsPerStrip, 4, 1, uint32(h)},
 		{tiffTagStripByteCounts, 4, 1, uint32(w * h * numCh * bits / 8)},
 		{tiffTagPlanarConfig, 3, 1, 1},
-		{tiffTagSampleFormat, 3, uint32(numCh), sampleFmtOffset},
 	}
 	if numCh == 6 {
 		entries = append(entries, tiffEntry{tiffTagExtraSamples, 3, 3, extraOffset})
 	}
+	entries = append(entries, tiffEntry{tiffTagSampleFormat, 3, uint32(numCh), sampleFmtOffset})
 	for _, e := range entries {
 		binary.Write(f, binary.LittleEndian, e.tag)
 		binary.Write(f, binary.LittleEndian, e.typ)
